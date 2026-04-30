@@ -72,6 +72,46 @@
             </plugin>
 
             <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>helper-service</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>java</executable>
+                            <arguments>
+                                <argument>--enable-native-access=ALL-UNNAMED</argument>
+                                <argument>--sun-misc-unsafe-memory-access=allow</argument>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>com.example.kafkademo.HelperService</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>combat-system</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>java</executable>
+                            <arguments>
+                                <argument>--enable-native-access=ALL-UNNAMED</argument>
+                                <argument>--sun-misc-unsafe-memory-access=allow</argument>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>com.example.kafkademo.CombatSystem</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
                 <groupId>org.xolstice.maven.plugins</groupId>
                 <artifactId>protobuf-maven-plugin</artifactId>
                 <version>0.6.1</version>

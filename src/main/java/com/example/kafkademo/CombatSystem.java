@@ -52,7 +52,7 @@ public class CombatSystem {
     private static void shutdown() {
         System.out.println("[CombatSystem] Shutting down...");
         // Clear any leftover messages from previous runs
-        TopicResetter.resetTopics(BOOTSTRAP_SERVERS, QUERIES_TOPIC, RESPONSES_TOPIC);
+//        TopicResetter.resetTopics(BOOTSTRAP_SERVERS, QUERIES_TOPIC, RESPONSES_TOPIC);
         executor.shutdownNow();
     }
 
