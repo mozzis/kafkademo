@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package com.example.kafkademo;
+
+option java_multiple_files = true;
+option java_package = "com.example.kafkademo.proto";
+option java_outer_classname = "MessagesProto";
+
+message MQuery {
+    string m_text = 1;
+    int32 m_serial = 2;
+    float addend1 = 3;
+    float addend2 = 4;
+}
+
+message MResponse {
+    string m_text = 1;
+    int32 m_serial = 2;
+    float sum = 3;
+}
