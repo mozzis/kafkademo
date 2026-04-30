@@ -2,7 +2,6 @@ package com.example.kafkademo;
 
 import com.example.kafkademo.proto.MQuery;
 import com.example.kafkademo.proto.MResponse;
-import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -10,8 +9,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.ByteArrayDeserializer;
-import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
@@ -22,6 +20,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class HelperService {
+
+    private static volatile KafkaConsumer<String, MQuery> queryConsumer;
 
     private static final String BOOTSTRAP_SERVERS = "localhost:9092";
     private static final String QUERIES_TOPIC = "Queries";
@@ -40,6 +40,11 @@ public class HelperService {
     private static void shutdown() {
         System.out.println("[HelperService] Shutting down...");
 
+        KafkaConsumer<String, MQuery> consumer = queryConsumer;
+        if (consumer != null) {
+            consumer.wakeup();
+        }
+
         if (executor != null) {
             executor.shutdownNow();
         }
@@ -53,6 +58,8 @@ public class HelperService {
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ProtobufSerializer.class.getName());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        consumerProps.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "6000");
+        consumerProps.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "2000");
 
         Properties producerProps = new Properties();
         producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
@@ -62,8 +69,12 @@ public class HelperService {
 
         try (KafkaConsumer<String, MQuery> consumer =
                      new KafkaConsumer<>(consumerProps, new StringDeserializer(), ProtobufSerializer.deserializer(MQuery.parser()));
+
              KafkaProducer<String, MResponse> producer =
-                     new KafkaProducer<>(producerProps, new StringSerializer(), new ProtobufSerializer<>())) {
+                     new KafkaProducer<>(producerProps, new StringSerializer(), new ProtobufSerializer<>()))
+        {
+
+            queryConsumer = consumer;
 
             consumer.subscribe(Collections.singletonList(QUERIES_TOPIC));
             System.out.println("[HelperService] Listening on topic '" + QUERIES_TOPIC + "'...");
@@ -105,6 +116,11 @@ public class HelperService {
                     });
                 }
             }
+        } catch (WakeupException e) {
+            // Expected during shutdown. Let try-with-resources close the consumer cleanly.
+        }
+        finally {
+            queryConsumer = null;
         }
     }
 }

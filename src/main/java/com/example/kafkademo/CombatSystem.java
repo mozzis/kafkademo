@@ -2,7 +2,6 @@ package com.example.kafkademo;
 
 import com.example.kafkademo.proto.MQuery;
 import com.example.kafkademo.proto.MResponse;
-import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -10,8 +9,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.ByteArrayDeserializer;
-import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
@@ -24,6 +22,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class CombatSystem {
+
+    private static volatile KafkaConsumer<String, MResponse> responseConsumer;
 
     private static final String BOOTSTRAP_SERVERS = "localhost:9092";
     private static final String QUERIES_TOPIC = "Queries";
@@ -51,9 +51,15 @@ public class CombatSystem {
 
     private static void shutdown() {
         System.out.println("[CombatSystem] Shutting down...");
-        // Clear any leftover messages from previous runs
-//        TopicResetter.resetTopics(BOOTSTRAP_SERVERS, QUERIES_TOPIC, RESPONSES_TOPIC);
-        executor.shutdownNow();
+
+        KafkaConsumer<String, MResponse> consumer = responseConsumer;
+        if (consumer != null) {
+            consumer.wakeup();
+        }
+
+        if (executor != null) {
+            executor.shutdownNow();
+        }
     }
 
     private static int mSerialCounter = 0;
@@ -82,7 +88,7 @@ public class CombatSystem {
             while (!Thread.currentThread().isInterrupted()) {
                 float addend1 = 1 + random.nextFloat() * 99;  // [1, 100)
                 float addend2 = 1 + random.nextFloat() * 99;
-                
+            
                 MQuery query = MQuery.newBuilder()
                         .setMText("Please add these numbers: ")
                         .setMSerial(mSerialCounter++)
@@ -121,9 +127,13 @@ public class CombatSystem {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ProtobufSerializer.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "6000");
+        props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "2000");
 
         try (KafkaConsumer<String, MResponse> consumer = new KafkaConsumer<>(
                 props, new StringDeserializer(), ProtobufSerializer.deserializer(MResponse.parser()))) {
+
+            responseConsumer = consumer;
 
             consumer.subscribe(Collections.singletonList(RESPONSES_TOPIC),
                     new org.apache.kafka.clients.consumer.ConsumerRebalanceListener() {
@@ -149,6 +159,10 @@ public class CombatSystem {
                             response.getMSerial(), response.getMText(), response.getSum());
                 }
             }
+        } catch (WakeupException e) {
+            // Expected during shutdown. Let try-with-resources close the consumer cleanly.
+        } finally {
+            responseConsumer = null;
         }
     }
 }
