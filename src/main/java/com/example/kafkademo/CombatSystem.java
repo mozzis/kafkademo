@@ -1,8 +1,8 @@
-// demonstrate kafka producer/consumer operation.
-// "CombatSystem" sends a series of addition problems for the helper service to solve
-// When it receives the answers, it displays them
 package com.example.kafkademo;
 
+import com.example.kafkademo.proto.MQuery;
+import com.example.kafkademo.proto.MResponse;
+import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -10,6 +10,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
@@ -50,21 +52,23 @@ public class CombatSystem {
     private static void shutdown() {
         System.out.println("[CombatSystem] Shutting down...");
         // Clear any leftover messages from previous runs
-//        TopicResetter.resetTopics(BOOTSTRAP_SERVERS, QUERIES_TOPIC);
+        TopicResetter.resetTopics(BOOTSTRAP_SERVERS, QUERIES_TOPIC, RESPONSES_TOPIC);
         executor.shutdownNow();
     }
+
+    private static int mSerialCounter = 0;
 
     private static void produceQueries() {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
         props.put(ProducerConfig.CLIENT_ID_CONFIG, CLIENT_ID + "-producer");
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
 
         Random random = new Random();
 
-        try (KafkaProducer<String, MQuery> producer =
-                     new KafkaProducer<>(props, new StringSerializer(), JsonSerDeser.serializer())) {
+        try (KafkaProducer<String, byte[]> producer =
+                     new KafkaProducer<>(props, new StringSerializer(), new ByteArraySerializer())) {
 
             // Wait until the response consumer has been assigned partitions
             try {
@@ -77,17 +81,23 @@ public class CombatSystem {
             while (!Thread.currentThread().isInterrupted()) {
                 float addend1 = 1 + random.nextFloat() * 99;  // [1, 100)
                 float addend2 = 1 + random.nextFloat() * 99;
-                MQuery query = new MQuery("Please add these numbers: ", addend1, addend2);
+                
+                MQuery query = MQuery.newBuilder()
+                        .setMText("Please add these numbers: ")
+                        .setMSerial(mSerialCounter++)
+                        .setAddend1(addend1)
+                        .setAddend2(addend2)
+                        .build();
 
-                ProducerRecord<String, MQuery> record =
-                        new ProducerRecord<>(QUERIES_TOPIC, query);
+                ProducerRecord<String, byte[]> record =
+                        new ProducerRecord<>(QUERIES_TOPIC, query.toByteArray());
                 producer.send(record, (metadata, exception) -> {
                     if (exception != null) {
                         System.err.println("[CombatSystem] Failed to send query: " + exception.getMessage());
                     } else {
                         System.out.printf(
                                 "[CombatSystem] Sent query %d: %s%.2f + %.2f%n",
-                                query.getmSerial(), query.getmText(), query.getAddend1(), query.getAddend2());
+                                query.getMSerial(), query.getMText(), query.getAddend1(), query.getAddend2());
                     }
                 });
 
@@ -108,11 +118,11 @@ public class CombatSystem {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "combat-system-response-group");
         props.put(ConsumerConfig.CLIENT_ID_CONFIG, CLIENT_ID + "-consumer");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
 
-        try (KafkaConsumer<String, MResponse> consumer = new KafkaConsumer<>(
-                props, new StringDeserializer(), JsonSerDeser.deserializer(MResponse.class))) {
+        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(
+                props, new StringDeserializer(), new ByteArrayDeserializer())) {
 
             consumer.subscribe(Collections.singletonList(RESPONSES_TOPIC),
                     new org.apache.kafka.clients.consumer.ConsumerRebalanceListener() {
@@ -130,14 +140,15 @@ public class CombatSystem {
                     });
 
             while (!Thread.currentThread().isInterrupted()) {
-                ConsumerRecords<String, MResponse> records = consumer.poll(Duration.ofMillis(500));
-                for (ConsumerRecord<String, MResponse> rec : records) {
-                    MResponse response = rec.value();
-
-                    if (response != null) {
+                ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(500));
+                for (ConsumerRecord<String, byte[]> rec : records) {
+                    try {
+                        MResponse response = MResponse.parseFrom(rec.value());
                         System.out.printf(
                                 "[CombatSystem] Received response %d: %s%.2f%n",
-                                response.getmSerial(), response.getmText(), response.getSum());
+                                response.getMSerial(), response.getMText(), response.getSum());
+                    } catch (InvalidProtocolBufferException e) {
+                        System.err.println("[CombatSystem] Failed to parse protobuf response: " + e.getMessage());
                     }
                 }
             }
