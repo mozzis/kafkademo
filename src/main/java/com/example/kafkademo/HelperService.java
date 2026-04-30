@@ -51,35 +51,28 @@ public class HelperService {
         consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "helper-service-group");
         consumerProps.put(ConsumerConfig.CLIENT_ID_CONFIG, CLIENT_ID + "-consumer");
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ProtobufSerializer.class.getName());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
 
         Properties producerProps = new Properties();
         producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
         producerProps.put(ProducerConfig.CLIENT_ID_CONFIG, CLIENT_ID + "-producer");
         producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ProtobufSerializer.class.getName());
 
-        try (KafkaConsumer<String, byte[]> consumer =
-                     new KafkaConsumer<>(consumerProps, new StringDeserializer(), new ByteArrayDeserializer());
-             KafkaProducer<String, byte[]> producer =
-                     new KafkaProducer<>(producerProps, new StringSerializer(), new ByteArraySerializer())) {
+        try (KafkaConsumer<String, MQuery> consumer =
+                     new KafkaConsumer<>(consumerProps, new StringDeserializer(), ProtobufSerializer.deserializer(MQuery.parser()));
+             KafkaProducer<String, MResponse> producer =
+                     new KafkaProducer<>(producerProps, new StringSerializer(), new ProtobufSerializer<>())) {
 
             consumer.subscribe(Collections.singletonList(QUERIES_TOPIC));
             System.out.println("[HelperService] Listening on topic '" + QUERIES_TOPIC + "'...");
 
             while (!Thread.currentThread().isInterrupted()) {
-                ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(500));
+                ConsumerRecords<String, MQuery> records = consumer.poll(Duration.ofMillis(500));
 
-                for (ConsumerRecord<String, byte[]> record : records) {
-                    MQuery query;
-
-                    try {
-                        query = MQuery.parseFrom(record.value());
-                    } catch (InvalidProtocolBufferException e) {
-                        System.err.println("[HelperService] Failed to parse protobuf query: " + e.getMessage());
-                        continue;
-                    }
+                for (ConsumerRecord<String, MQuery> record : records) {
+                    MQuery query = record.value();
 
                     System.out.printf(
                             "[HelperService] Received query %d: %s%.2f + %.2f%n",
@@ -96,8 +89,8 @@ public class HelperService {
                             .setSum(sum)
                             .build();
 
-                    ProducerRecord<String, byte[]> responseRecord =
-                            new ProducerRecord<>(RESPONSES_TOPIC, response.toByteArray());
+                    ProducerRecord<String, MResponse> responseRecord =
+                            new ProducerRecord<>(RESPONSES_TOPIC, response);
 
                     producer.send(responseRecord, (metadata, exception) -> {
                         if (exception != null) {

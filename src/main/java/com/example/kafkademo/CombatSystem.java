@@ -63,14 +63,15 @@ public class CombatSystem {
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
         props.put(ProducerConfig.CLIENT_ID_CONFIG, CLIENT_ID + "-producer");
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ProtobufSerializer.class.getName());
 
         Random random = new Random();
 
-        try (KafkaProducer<String, byte[]> producer =
-                     new KafkaProducer<>(props, new StringSerializer(), new ByteArraySerializer())) {
+        try (KafkaProducer<String, MQuery> producer =
+                     new KafkaProducer<>(props, new StringSerializer(), new ProtobufSerializer<>())) {
 
             // Wait until the response consumer has been assigned partitions
+            // otherwise it gets phantom messages on startup
             try {
                 consumerReady.await();
             } catch (InterruptedException e) {
@@ -89,8 +90,8 @@ public class CombatSystem {
                         .setAddend2(addend2)
                         .build();
 
-                ProducerRecord<String, byte[]> record =
-                        new ProducerRecord<>(QUERIES_TOPIC, query.toByteArray());
+                ProducerRecord<String, MQuery> record =
+                        new ProducerRecord<>(QUERIES_TOPIC, query);
                 producer.send(record, (metadata, exception) -> {
                     if (exception != null) {
                         System.err.println("[CombatSystem] Failed to send query: " + exception.getMessage());
@@ -118,11 +119,11 @@ public class CombatSystem {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "combat-system-response-group");
         props.put(ConsumerConfig.CLIENT_ID_CONFIG, CLIENT_ID + "-consumer");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ProtobufSerializer.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
 
-        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(
-                props, new StringDeserializer(), new ByteArrayDeserializer())) {
+        try (KafkaConsumer<String, MResponse> consumer = new KafkaConsumer<>(
+                props, new StringDeserializer(), ProtobufSerializer.deserializer(MResponse.parser()))) {
 
             consumer.subscribe(Collections.singletonList(RESPONSES_TOPIC),
                     new org.apache.kafka.clients.consumer.ConsumerRebalanceListener() {
@@ -140,16 +141,12 @@ public class CombatSystem {
                     });
 
             while (!Thread.currentThread().isInterrupted()) {
-                ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(500));
-                for (ConsumerRecord<String, byte[]> rec : records) {
-                    try {
-                        MResponse response = MResponse.parseFrom(rec.value());
-                        System.out.printf(
-                                "[CombatSystem] Received response %d: %s%.2f%n",
-                                response.getMSerial(), response.getMText(), response.getSum());
-                    } catch (InvalidProtocolBufferException e) {
-                        System.err.println("[CombatSystem] Failed to parse protobuf response: " + e.getMessage());
-                    }
+                ConsumerRecords<String, MResponse> records = consumer.poll(Duration.ofMillis(500));
+                for (ConsumerRecord<String, MResponse> rec : records) {
+                    MResponse response = rec.value();
+                    System.out.printf(
+                            "[CombatSystem] Received response %d: %s%.2f%n",
+                            response.getMSerial(), response.getMText(), response.getSum());
                 }
             }
         }
