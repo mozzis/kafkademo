@@ -29,6 +29,7 @@ public class CombatSystem {
     private static final String QUERIES_TOPIC = "Queries";
     private static final String RESPONSES_TOPIC = "Responses";
     private static final String CLIENT_ID = "combat-system";
+    private static final Duration CONSUMER_POLL_TIMEOUT = Duration.ofMillis(500);
 
     private static ExecutorService executor;
     // create a signal to wait for the consumer to be ready
@@ -36,14 +37,30 @@ public class CombatSystem {
 
     public static void main(String[] args) {
 
+        System.out.println("[CombatSystem] Starting...");
+
         // one thread each fpr the producer and consumer
         executor = Executors.newFixedThreadPool(2);
 
         // Start the response listener first
-        executor.submit(CombatSystem::consumeResponses);
+        executor.submit(() -> {
+            try {
+                consumeResponses();
+            } catch (Exception e) {
+                System.err.println("[CombatSystem] Response consumer failed:");
+                e.printStackTrace();
+            }
+        });
 
         // Produce queries only after the consumer is ready
-        executor.submit(CombatSystem::produceQueries);
+        executor.submit(() -> {
+            try {
+                produceQueries();
+            } catch (Exception e) {
+                System.err.println("[CombatSystem] Query producer failed:");
+                e.printStackTrace();
+            }
+        });
 
         // arrange for shutdown to cleanup when done
         Runtime.getRuntime().addShutdownHook(new Thread(CombatSystem::shutdown));
@@ -79,7 +96,9 @@ public class CombatSystem {
             // Wait until the response consumer has been assigned partitions
             // otherwise it gets phantom messages on startup
             try {
+                System.out.println("[CombatSystem] Producer waiting for response consumer...");
                 consumerReady.await();
+                System.out.println("[CombatSystem] Producer started.");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -120,6 +139,8 @@ public class CombatSystem {
     }
 
     private static void consumeResponses() {
+        System.out.println("[CombatSystem] Starting response consumer...");
+
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "combat-system-response-group");
@@ -129,11 +150,14 @@ public class CombatSystem {
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "6000");
         props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "2000");
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "100");
 
         try (KafkaConsumer<String, MResponse> consumer = new KafkaConsumer<>(
                 props, new StringDeserializer(), ProtobufSerializer.deserializer(MResponse.parser()))) {
 
             responseConsumer = consumer;
+
+            System.out.println("[CombatSystem] Subscribing to topic: " + RESPONSES_TOPIC);
 
             consumer.subscribe(Collections.singletonList(RESPONSES_TOPIC),
                     new org.apache.kafka.clients.consumer.ConsumerRebalanceListener() {
@@ -151,12 +175,11 @@ public class CombatSystem {
                     });
 
             while (!Thread.currentThread().isInterrupted()) {
-                ConsumerRecords<String, MResponse> records = consumer.poll(Duration.ofMillis(500));
+                ConsumerRecords<String, MResponse> records = consumer.poll(CONSUMER_POLL_TIMEOUT);
                 for (ConsumerRecord<String, MResponse> rec : records) {
                     MResponse response = rec.value();
                     System.out.printf(
-                            "[CombatSystem] Received response %d: %s%.2f%n",
-                            response.getMSerial(), response.getMText(), response.getSum());
+                            "[CombatSystem] Received response %d: %s%.2f%n",                            response.getMSerial(), response.getMText(), response.getSum());
                 }
             }
         } catch (WakeupException e) {
