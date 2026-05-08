@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kafka Monitor GUI</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-color: #f0f2f5;
+        }
+        header {
+            background-color: #20232a;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            gap: 10px;
+            padding: 10px;
+        }
+        .pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .pane-header {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-bottom: 1px solid #dee2e6;
+            font-weight: bold;
+            font-size: 1.2rem;
+            color: #495057;
+        }
+        .message-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            list-style: none;
+            margin: 0;
+        }
+        .message-item {
+            padding: 8px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+            background-color: #e9ecef;
+            font-size: 0.9rem;
+        }
+        .message-item.response {
+            border-left-color: #28a745;
+        }
+        .timestamp {
+            font-size: 0.75rem;
+            color: #6c757d;
+            margin-bottom: 4px;
+        }
+        .data {
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Kafka Demo Monitor</h1>
+    </header>
+    <div class="container">
+        <div class="pane" id="combat-system-pane">
+            <div class="pane-header">Combat System</div>
+            <ul class="message-list" id="queries-list"></ul>
+        </div>
+        <div class="pane" id="helper-service-pane">
+            <div class="pane-header">HelperService</div>
+            <ul class="message-list" id="responses-list"></ul>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const queriesList = document.getElementById('queries-list');
+        const responsesList = document.getElementById('responses-list');
+
+        socket.on('kafka-message', (data) => {
+            const li = document.createElement('li');
+            li.className = 'message-item' + (data.topic === 'Responses' ? ' response' : '');
+            
+            const timestamp = new Date(parseInt(data.timestamp)).toLocaleTimeString();
+            
+            li.innerHTML = `
+                <div class="timestamp">${timestamp}</div>
+                <div class="data">${JSON.stringify(data.value, null, 2)}</div>
+            `;
+
+            if (data.topic === 'Queries') {
+                queriesList.prepend(li);
+            } else {
+                responsesList.prepend(li);
+            }
+        });
+    </script>
+</body>
+</html>
